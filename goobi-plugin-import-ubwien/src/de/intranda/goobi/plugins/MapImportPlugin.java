@@ -1,12 +1,15 @@
 package de.intranda.goobi.plugins;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
+import org.goobi.production.enums.ImportReturnValue;
 import org.goobi.production.enums.ImportType;
 import org.goobi.production.enums.PluginType;
 import org.goobi.production.importer.DocstructElement;
@@ -18,8 +21,13 @@ import org.goobi.production.plugin.interfaces.IOpacPlugin;
 import org.goobi.production.plugin.interfaces.IPlugin;
 import org.goobi.production.properties.ImportProperty;
 
+import ugh.dl.DigitalDocument;
+import ugh.dl.DocStruct;
 import ugh.dl.Fileformat;
+import ugh.dl.Metadata;
 import ugh.dl.Prefs;
+import ugh.exceptions.PreferencesException;
+import ugh.exceptions.WriteException;
 import de.sub.goobi.helper.exceptions.ImportPluginException;
 import de.unigoettingen.sub.search.opac.ConfigOpac;
 import de.unigoettingen.sub.search.opac.ConfigOpacCatalogue;
@@ -34,44 +42,11 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
 
     private Prefs prefs;
 
-    private String tempFolder = "";
+    private String tempFolder;
 
     private static final String SOURCE_FOLDER = "/home/tomcat/ubmaps/";
 
     private String currentIdentifier;
-    private String ats;
-
-    @Override
-    public Fileformat convertData() throws ImportPluginException {
-        if (logger.isDebugEnabled()) {
-            logger.debug("Get opac record for " + currentIdentifier);
-        }
-        Fileformat myRdf = null;
-        try {
-            ConfigOpacCatalogue coc = new ConfigOpac().getCatalogueByName("OBVSG-MAP");
-            IOpacPlugin myImportOpac = (IOpacPlugin) PluginLoader.getPluginByTitle(PluginType.Opac, coc.getOpacType());
-            myRdf = myImportOpac.search("12", currentIdentifier, coc, prefs);
-            if (myRdf != null) {
-                try {
-                    logger.debug(myRdf.getDigitalDocument().getLogicalDocStruct().getType().getName());
-                    // TODO get Title and Author
-                    String title = myRdf.getDigitalDocument().getLogicalDocStruct()
-                            .getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0).getValue();
-                    logger.debug(title);
-//                    ats =
-//                            myImportOpac.createAtstsl(
-//                                    title, null).toLowerCase();
-
-                } catch (Exception e) {
-                    ats = "";
-                }
-            }
-        } catch (Exception e1) {
-            logger.error(e1);
-        }
-
-        return myRdf;
-    }
 
     @Override
     public String getProcessTitle() {
@@ -84,23 +59,54 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
         List<ImportObject> answer = new ArrayList<ImportObject>();
         // TODO Auto-generated method stub
         for (Record record : records) {
+            ImportObject io = new ImportObject();
+            io.setProcessTitle(record.getId());
             if (logger.isDebugEnabled()) {
                 logger.debug("import data for " + record.getId());
             }
-
             currentIdentifier = record.getId();
             try {
                 Fileformat ff = convertData();
-            } catch (ImportPluginException e) {
+
+                if (ff == null) {
+                    io.setErrorMessage(record.getId() + ": error during opac request.");
+                    io.setImportReturnValue(ImportReturnValue.InvalidData);
+                } else {
+
+                    // save mets file
+                    try {
+                        ff.write(tempFolder + record.getId() + ".xml");
+                    } catch (WriteException | PreferencesException e) {
+                        logger.error(e);
+                    }
+                    //            io.setImportFileName(importFolder + name + ".xml");
+                    io.setMetsFilename(tempFolder + record.getId() + ".xml");
+                    io.setProcessTitle(record.getId());
+                    io.setImportReturnValue(ImportReturnValue.ExportFinished);
+
+                    // copy image
+                    File destination =
+                            new File(tempFolder + record.getId() + File.separator + "images" + File.separator + "master_" + record.getId() + "_media"
+                                    + File.separator + record.getId() + ".tif");
+                    if (!destination.getParentFile().exists()) {
+                        destination.getParentFile().mkdirs();
+                    }
+                    File source = new File(SOURCE_FOLDER + record.getData());
+                    FileUtils.copyFile(source, destination);
+
+                }
+
+            } catch (ImportPluginException | IOException e) {
                 logger.error(e);
+                io.setErrorMessage(record.getId() + ": " + e.getMessage());
             }
+            answer.add(io);
         }
         return answer;
     }
 
     @Override
     public List<ImportProperty> getProperties() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -115,6 +121,50 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
         }
 
         return answer;
+    }
+
+    @Override
+    public Fileformat convertData() throws ImportPluginException {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Get opac record for " + currentIdentifier);
+        }
+        Fileformat ff = null;
+        try {
+            // get logical data from opac
+            ConfigOpacCatalogue coc = new ConfigOpac().getCatalogueByName("OBVSG-MAP");
+            IOpacPlugin myImportOpac = (IOpacPlugin) PluginLoader.getPluginByTitle(PluginType.Opac, coc.getOpacType());
+            ff = myImportOpac.search("12", currentIdentifier, coc, prefs);
+
+            // create physical image
+            DigitalDocument dd = ff.getDigitalDocument();
+
+            DocStruct phys = dd.getPhysicalDocStruct();
+            if (phys == null) {
+                phys = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
+                dd.setPhysicalDocStruct(phys);
+            }
+            //  imagepath
+            Metadata path = new Metadata(prefs.getMetadataTypeByName("pathimagefiles"));
+            path.setValue(currentIdentifier + "/images/" + currentIdentifier + "_media");
+            phys.addMetadata(path);
+            
+            DocStruct page = dd.createDocStruct(prefs.getDocStrctTypeByName("page"));
+            phys.addChild(page);
+            page.setImageName(currentIdentifier + ".tif");
+
+            Metadata logOrder = new Metadata(prefs.getMetadataTypeByName("logicalPageNumber"));
+            logOrder.setValue("-");
+            page.addMetadata(logOrder);
+
+            Metadata physOrder = new Metadata(prefs.getMetadataTypeByName("physPageNumber"));
+            physOrder.setValue("1");
+            page.addMetadata(physOrder);
+
+        } catch (Exception e1) {
+            logger.error(e1);
+        }
+
+        return ff;
     }
 
     @Override
