@@ -50,14 +50,13 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
 
     @Override
     public String getProcessTitle() {
-        // TODO Auto-generated method stub
-        return null;
+        return currentIdentifier;
     }
 
     @Override
     public List<ImportObject> generateFiles(List<Record> records) {
         List<ImportObject> answer = new ArrayList<ImportObject>();
-        // TODO Auto-generated method stub
+
         for (Record record : records) {
             ImportObject io = new ImportObject();
             io.setProcessTitle(record.getId());
@@ -160,6 +159,7 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
             physOrder.setValue("1");
             page.addMetadata(physOrder);
 
+            phys.addChild(page);
         } catch (Exception e1) {
             logger.error(e1);
         }
