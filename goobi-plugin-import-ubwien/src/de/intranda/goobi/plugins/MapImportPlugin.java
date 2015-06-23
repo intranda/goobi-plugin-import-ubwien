@@ -137,6 +137,13 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
             // create physical image
             DigitalDocument dd = ff.getDigitalDocument();
 
+            // create collection
+            
+            DocStruct log = dd.getLogicalDocStruct();
+            Metadata col = new Metadata(prefs.getMetadataTypeByName("singleDigCollection"));
+            col.setValue("Karten");
+            log.addMetadata(col);
+            
             DocStruct phys = dd.getPhysicalDocStruct();
             if (phys == null) {
                 phys = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
