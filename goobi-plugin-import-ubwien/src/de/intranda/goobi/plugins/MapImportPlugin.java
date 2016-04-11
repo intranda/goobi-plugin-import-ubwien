@@ -28,6 +28,7 @@ import ugh.dl.Metadata;
 import ugh.dl.Prefs;
 import ugh.exceptions.PreferencesException;
 import ugh.exceptions.WriteException;
+import de.sub.goobi.forms.MassImportForm;
 import de.sub.goobi.helper.exceptions.ImportPluginException;
 import de.unigoettingen.sub.search.opac.ConfigOpac;
 import de.unigoettingen.sub.search.opac.ConfigOpacCatalogue;
@@ -279,5 +280,11 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
     @Override
     public String getImportFolder() {
         return tempFolder;
+    }
+    
+    
+    public void setForm(MassImportForm form) {
+        // TODO Auto-generated method stub
+        
     }
 }
