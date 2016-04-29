@@ -106,7 +106,7 @@
 
 	<target name="compile">
 		<echo>Using jenkins compiler</echo>
-		<javac destdir="${dir.build}" includeantruntime="false" debug="true" >
+		<javac destdir="${dir.build}" includeantruntime="false" debug="true" source="1.7" target="1.7">
 			<classpath refid="classpath" />
 			<compilerarg value="-Xlint" />
 			<src path="src" />

@@ -7,9 +7,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
-import org.goobi.production.enums.ImportReturnValue;
+import org.goobi.beans.Process;
 import org.goobi.production.enums.ImportType;
 import org.goobi.production.enums.PluginType;
 import org.goobi.production.importer.DocstructElement;
@@ -26,20 +25,27 @@ import ugh.dl.DocStruct;
 import ugh.dl.Fileformat;
 import ugh.dl.Metadata;
 import ugh.dl.Prefs;
+import ugh.exceptions.DocStructHasNoTypeException;
+import ugh.exceptions.MetadataTypeNotAllowedException;
 import ugh.exceptions.PreferencesException;
+import ugh.exceptions.ReadException;
 import ugh.exceptions.WriteException;
 import de.sub.goobi.forms.MassImportForm;
+import de.sub.goobi.helper.Helper;
+import de.sub.goobi.helper.exceptions.DAOException;
 import de.sub.goobi.helper.exceptions.ImportPluginException;
+import de.sub.goobi.helper.exceptions.SwapException;
+import de.sub.goobi.persistence.managers.ProcessManager;
 import de.unigoettingen.sub.search.opac.ConfigOpac;
 import de.unigoettingen.sub.search.opac.ConfigOpacCatalogue;
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 
 @PluginImplementation
-public class MapImportPlugin implements IImportPlugin, IPlugin {
+public class MapUpdatePlugin implements IImportPlugin, IPlugin {
 
-    private static final Logger logger = Logger.getLogger(MapImportPlugin.class);
+    private static final Logger logger = Logger.getLogger(MapUpdatePlugin.class);
 
-    private static final String PLUGIN_NAME = "intranda_import_Maps";
+    private static final String PLUGIN_NAME = "intranda_update_Maps";
 
     private Prefs prefs;
 
@@ -50,7 +56,7 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
     private String currentIdentifier;
 
     private MassImportForm form;
-    
+
     @Override
     public String getProcessTitle() {
         return currentIdentifier;
@@ -61,50 +67,39 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
         List<ImportObject> answer = new ArrayList<ImportObject>();
 
         for (Record record : records) {
-            form.addProcessToProgressBar();
-            
-            ImportObject io = new ImportObject();
-            io.setProcessTitle(record.getId());
-            if (logger.isDebugEnabled()) {
-                logger.debug("import data for " + record.getId());
-            }
-            currentIdentifier = record.getId();
             try {
+                form.addProcessToProgressBar();
+                currentIdentifier = record.getId();
                 Fileformat ff = convertData();
-
                 if (ff == null) {
-                    io.setErrorMessage(record.getId() + ": error during opac request.");
-                    io.setImportReturnValue(ImportReturnValue.InvalidData);
+                    Helper.setFehlerMeldung("opac request error: " + currentIdentifier);
                 } else {
 
-                    // save mets file
-                    try {
-                        ff.write(tempFolder + record.getId() + ".xml");
-                    } catch (WriteException | PreferencesException e) {
-                        logger.error(e);
-                    }
-                    //            io.setImportFileName(importFolder + name + ".xml");
-                    io.setMetsFilename(tempFolder + record.getId() + ".xml");
-                    io.setProcessTitle(record.getId());
-                    io.setImportReturnValue(ImportReturnValue.ExportFinished);
+                    List<Process> processList = ProcessManager.getProcesses(null, "prozesse.titel='" + currentIdentifier + "'");
 
-                    // copy image
-                    File destination =
-                            new File(tempFolder + record.getId() + File.separator + "images" + File.separator + "master_" + record.getId() + "_media"
-                                    + File.separator + record.getId() + ".tif");
-                    if (!destination.getParentFile().exists()) {
-                        destination.getParentFile().mkdirs();
-                    }
-                    File source = new File(SOURCE_FOLDER + record.getData());
-                    FileUtils.copyFile(source, destination);
+                    if (processList.size() == 1) {
+                        Process process = processList.get(0);
+                        Fileformat metsfile = process.readMetadataFile();
 
+                        DocStruct map = metsfile.getDigitalDocument().getLogicalDocStruct();
+                        List<Metadata> oldData = map.getAllMetadata();
+                        for (Metadata md : oldData) {
+                            map.removeMetadata(md);
+                        }
+                        List<Metadata> newData = ff.getDigitalDocument().getLogicalDocStruct().getAllMetadata();
+                        for (Metadata md : newData) {
+                            map.addMetadata(md);
+                        }
+
+                        process.writeMetadataFile(metsfile);
+                        Helper.setMeldung("import successfull: " + currentIdentifier);
+                    }
                 }
-
-            } catch (ImportPluginException | IOException e) {
+            } catch (ImportPluginException | PreferencesException | ReadException | WriteException | IOException | InterruptedException
+                    | SwapException | DAOException | MetadataTypeNotAllowedException | DocStructHasNoTypeException e) {
                 logger.error(e);
-                io.setErrorMessage(record.getId() + ": " + e.getMessage());
+                Helper.setFehlerMeldung("import error: " + currentIdentifier);
             }
-            answer.add(io);
         }
         return answer;
     }
@@ -143,12 +138,12 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
             DigitalDocument dd = ff.getDigitalDocument();
 
             // create collection
-            
+
             DocStruct log = dd.getLogicalDocStruct();
             Metadata col = new Metadata(prefs.getMetadataTypeByName("singleDigCollection"));
             col.setValue("Karten");
             log.addMetadata(col);
-            
+
             DocStruct phys = dd.getPhysicalDocStruct();
             if (phys == null) {
                 phys = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
@@ -158,7 +153,7 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
             Metadata path = new Metadata(prefs.getMetadataTypeByName("pathimagefiles"));
             path.setValue(currentIdentifier + "/images/" + currentIdentifier + "_media");
             phys.addMetadata(path);
-            
+
             DocStruct page = dd.createDocStruct(prefs.getDocStrctTypeByName("page"));
             phys.addChild(page);
             page.setImageName(currentIdentifier + ".tif");
@@ -285,8 +280,7 @@ public class MapImportPlugin implements IImportPlugin, IPlugin {
     public String getImportFolder() {
         return tempFolder;
     }
-    
-    
+
     public void setForm(MassImportForm form) {
         this.form = form;
     }
